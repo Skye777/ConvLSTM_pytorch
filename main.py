@@ -1,60 +1,102 @@
 import torch as t
-from model.convlstm import *
+from model import *
 import numpy as np
 from data import dataset
 from torch.utils.data import DataLoader
+from config import DefaultConfig
 
 
-# hyper parameter setting
-height = 36
-width = 80
-channels = 1
-lags = 12
-steps = 12
-batch_size = 4
-n_epochs = 100
-use_cuda = False
+def val(model, dataloader, criterion):
 
-# load data
-train_dataset = dataset.SST('./data/sst.mon.mean1850-2015.nc', lags, steps, channels, height, width)
-train_dataloader = DataLoader(train_dataset, batch_size=batch_size)
+    # set to evaluation mode
+    model.eval()
 
-# train_X = X[:-120].view(len(X[:120]), lags, channels, height, width)
-model = ConvLSTM(input_size=(height, width),
-                 input_dim=channels,
-                 hidden_dim=[16, 16, 16, 1],
-                 kernel_size=(3, 3),
-                 num_layers=4,
-                 batch_first=True,
-                 bias=True,
-                 return_all_layers=False)
+    val_loss_list = list()
+    for ii, (val_input, val_target) in enumerate(dataloader):
+        val_input = t.Tensor(val_input)
+        val_target = t.Tensor(val_target)
 
-criterion = t.nn.MSELoss()
-optimizer = t.optim.Adam(model.parameters())
+        if opt.use_cuda:
+            val_input.cuda()
+            val_target.cuda()
 
-if use_cuda:
-    model.cuda()
-    criterion.cuda()
+        val_output, val_state = model(val_input)
+        val_output = val_output[0]
+        loss = criterion(val_output, val_target)
+        val_loss_list.append(loss.item())
 
-for epoch in range(n_epochs):
+    model.train()
+    val_loss = np.average(val_loss_list)
 
-    print("Epoch: [{}/{}]".format(epoch, n_epochs))
+    return val_loss
 
-    for ii, (input, target) in enumerate(train_dataloader):
 
-        input = t.Tensor(input)
-        target = t.Tensor(target)
+def train(opt):
 
-        if use_cuda:
-            input.cuda()
-            target.cuda()
+    # define and load model
+    model = ConvLSTM(input_size=(opt.height, opt.width),
+                     input_dim=opt.channels,
+                     hidden_dim=[16, 16, 16, 1],
+                     kernel_size=(3, 3),
+                     num_layers=4,
+                     batch_first=True,
+                     bias=True,
+                     return_all_layers=False)
 
-        # print(np.array(input).shape)
-        output, state = model(input)
-        output = output[0]
-        loss = criterion(output, target)
-        print("Batch:[{}], Loss:{}".format(ii, loss.item()))
-        loss.backward()
-        optimizer.step()
+    if opt.load_model_path:
+        model.load(opt.load_model_path)
+    if opt.use_cuda:
+        model.cuda()
+
+    # load data
+    train_dataset = dataset.SST(opt.data_root, opt.lags, opt.steps, opt.channels, opt.height, opt.width, train=True)
+    val_dataset = dataset.SST(opt.data_root, opt.lags, opt.steps, opt.channels, opt.height, opt.width, train=False)
+    train_dataloader = DataLoader(train_dataset, batch_size=opt.batch_size, shuffle=True)
+    val_dataloader = DataLoader(val_dataset, batch_size=opt.batch_size, shuffle=False)
+
+    # objective function and optimizer
+    criterion = t.nn.MSELoss()
+    lr = opt.lr
+    optimizer = t.optim.Adam(model.parameters(), lr=lr)
+    previous_loss = 1e100
+
+    for epoch in range(opt.n_epochs):
+
+        print("Epoch: [{}/{}]".format(epoch, opt.n_epochs))
+
+        for ii, (input, target) in enumerate(train_dataloader):
+
+            input = t.Tensor(input)
+            target = t.Tensor(target)
+
+            if opt.use_cuda:
+                input.cuda()
+                target.cuda()
+
+            # print(np.array(input).shape)
+            optimizer.zero_grad()
+            output, state = model(input)
+            output = output[0]
+            loss = criterion(output, target)
+            print("Batch:[{}], Loss:{}".format(ii, loss.item()))
+            loss.backward()
+            optimizer.step()
+
+        model.save()
+
+        val_loss = val(model, val_dataloader, criterion)
+        print("Epoch:[{}], Val_Loss:{}, lr:{}".format(epoch, val_loss, lr))
+
+        if val_loss > previous_loss:
+            lr = lr * opt.lr_decay
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = lr
+
+        previous_loss = val_loss
+
+
+opt = DefaultConfig()
+train(opt)
+
 
 

@@ -1,9 +1,10 @@
 import torch.nn as nn
 from torch.autograd import Variable
 import torch
+from .basic_module import BasicModule
 
 
-class ConvLSTMCell(nn.Module):
+class ConvLSTMCell(BasicModule):
 
     def __init__(self, input_size, input_dim, hidden_dim, kernel_size, bias):
         """
@@ -61,7 +62,7 @@ class ConvLSTMCell(nn.Module):
                 Variable(torch.zeros(batch_size, self.hidden_dim, self.height, self.width)))
 
 
-class ConvLSTM(nn.Module):
+class ConvLSTM(BasicModule):
 
     def __init__(self, input_size, input_dim, hidden_dim, kernel_size, num_layers,
                  batch_first=False, bias=True, return_all_layers=False):
